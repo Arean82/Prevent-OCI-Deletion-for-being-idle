@@ -1,8 +1,3 @@
 #!/bin/bash
-x=0
-
-while [ $x -le 50000 ]
-do
-  echo $(( RANDOM % 5000000000000 + 100000000000000000000 )) > /dev/null
-  x=$(( x + 1 ))
-done
+# Run a computationally intensive hash on random data for 5 seconds
+timeout 5 sha256sum /dev/urandom > /dev/null 2>&1 || true

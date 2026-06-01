@@ -102,10 +102,10 @@ printf "\n"
 echo "Configuration saved to $CONFIG_FILE"
 printf "\n\n"
 
-# Terminate running instances of POCIDFBIManager.sh
-echo "Terminating all running instances of POCIDFBIManager.sh..."
+# Restart the pocidfbi systemd service
+echo "Restarting the pocidfbi service to apply changes..."
 printf "\n"
-pkill -f POCIDFBIManager.sh
+sudo systemctl restart pocidfbi.service
 
 # Completion message with a border for visual appeal
 echo -e "================================================="

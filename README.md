@@ -2,9 +2,9 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/github/v/release/Codycody31/Prevent-OCI-Deletion-for-being-idle)](https://github.com/Codycody31/Prevent-OCI-Deletion-for-being-idle/releases/)
+[![Version](https://img.shields.io/github/v/release/Arean82/Prevent-OCI-Deletion-for-being-idle)](https://github.com/Arean82/Prevent-OCI-Deletion-for-being-idle/releases/)
 [![Discord](https://img.shields.io/discord/1166016207816757248?color=7289da&label=Discord&logo=discord&logoColor=white)](https://discord.gg/HRNVF5Tf9a)
-[![License](https://img.shields.io/github/license/Codycody31/Prevent-OCI-Deletion-for-being-idle)](LICENSE)
+[![License](https://img.shields.io/github/license/Arean82/Prevent-OCI-Deletion-for-being-idle)](LICENSE)
 
 </div>
 
@@ -28,9 +28,11 @@ The purpose of these scripts is to ensure that the instance remains within Oracl
 
 ## Scripts Description
 
-1. **workers/WasteCPUWorker.sh** - This is the CPU "waster" script, designed to produce computational work.
-2. **POCIDFBIManager.sh** - This script acts as the "manager". It monitors the CPU usage and spawns instances of `WasteCPUWorker.sh` if the usage falls below a certain threshold.
-3. **POCIDFBI.sh** - This script is used to configure the manager script. It will prompt you for the desired worker count and CPU threshold, and then update the `config.conf` file with the values.
+1. **workers/WasteCPUWorker.sh** - This is the CPU "waster" script, designed to produce computational work via hashing.
+2. **workers/WasteMemoryWorker.sh** - This script consumes memory via Python to keep A1 instances active.
+3. **workers/WasteNetworkWorker.sh** - This script downloads dummy data to `/dev/null` to generate active network traffic.
+4. **POCIDFBIManager.sh** - This script acts as the "manager" running as a systemd service. It monitors the CPU usage and spawns instances of the worker scripts if usage falls below a threshold.
+5. **POCIDFBI.sh** - This script is used to configure the manager script. It will prompt you for the desired worker count and CPU threshold, and then update the `config.conf` file and restart the systemd service.
 
 ## Configuration
 
@@ -92,7 +94,7 @@ Once you have set your desired values, the script will create/update the `config
 1. Clone the repository:
 
    ```bash
-   git clone Codycody31/Prevent-OCI-Deletion-for-being-idle
+   git clone https://github.com/Arean82/Prevent-OCI-Deletion-for-being-idle
    ```
 
 2. Navigate to the repository directory:
@@ -107,16 +109,19 @@ Once you have set your desired values, the script will create/update the `config
    chmod +x *.sh
    ```
 
-4. Edit your crontab:
+4. Add execute permissions to the worker scripts:
 
    ```bash
-   crontab -e
+   chmod +x workers/*.sh
    ```
 
-5. Add the following line to run the script every minute and log the output:
+5. Install and enable the systemd service (Alternatively, run `install.sh` to automate this):
 
    ```bash
-   * * * * * /bin/bash  $HOME/Prevent-OCI-Deletion-for-being-idle/POCIDFBIManager.sh
+   sudo cp pocidfbi.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable pocidfbi.service
+   sudo systemctl start pocidfbi.service
    ```
 
 ## Automated Setup
@@ -124,24 +129,24 @@ Once you have set your desired values, the script will create/update the `config
 For a quick and easy setup, you can run the following one-liner which fetches the `install.sh` script from the repository and executes it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Codycody31/Prevent-OCI-Deletion-for-being-idle/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Arean82/Prevent-OCI-Deletion-for-being-idle/master/install.sh | bash
 ```
 
-Upon running the above command, the script will be set up to trigger every minute via `crontab`. You can verify this by running `crontab -l` and checking for the following line:
+Upon running the above command, the script will be set up as a systemd service. You can verify this by checking the service status:
 
 ```bash
-* * * * * /bin/bash  $HOME/Prevent-OCI-Deletion-for-being-idle/POCIDFBIManager.sh
+sudo systemctl status pocidfbi.service
 ```
 
 ## Why and How of the Script Strategy
 
-**1. Why Use `WasteCPUWorker.sh`?**
+**1. Why Use the Worker Scripts?**
 
-The `WasteCPUWorker.sh` script is designed to generate computational work. The script produces random numbers and writes them to `/dev/null`, which means the numbers are discarded immediately. This activity creates a CPU workload without having any lasting effect on storage or other system resources.
+The `WasteCPUWorker.sh` script generates computational work by calculating a SHA256 hash stream for 5 seconds. `WasteMemoryWorker.sh` allocates a 50MB string in memory. `WasteNetworkWorker.sh` downloads dummy data to `/dev/null`. This combined activity satisfies Oracle's metrics without having any lasting effect on storage.
 
 **2. Why Monitor with `POCIDFBIManager.sh`?**
 
-Instead of blindly running the CPU waster script continuously, it's more efficient to monitor the system and only generate extra CPU work when it's needed. The `POCIDFBIManager.sh` script acts as a manager, checking the current CPU workload and deciding whether to activate the waste worker scripts.
+Instead of blindly running the waster scripts continuously, the `POCIDFBIManager.sh` script runs as a lightweight `systemd` background service, checking the current CPU workload and deciding whether to activate the waste worker scripts only when the server is idle.
 
 ## Modifying the Manager Script
 
@@ -166,71 +171,35 @@ To control the CPU usage, you might want to adjust the manager script. Here's a 
   uses `vmstat` to get system statistics. The value derived represents the CPU idle time, which is then subtracted from 100 to get the actual CPU load. If you are familiar with other system monitoring tools or commands and wish to use them, you can replace this line with an appropriate command that returns the current CPU load.
 
 * **Logging Information**:
-  You can add more detailed logging by adding `log` commands to the script. For example, if you want to log the time when the script activates, you can add the following line:
-
+  Logging is automatically handled by `systemd`. You can view the logs cleanly using:
+  
   ```bash
-  log "Script activated at $(date) due to low CPU load."
+  journalctl -u pocidfbi.service -f
   ```
 
 ## Troubleshooting: Stopping Rogue Script Instances
 
-If you've disabled the script from executing via `crontab`, but notice that the script (or its associated processes) are still consuming excessive CPU resources, it's possible that some instances of the script or its children are still running. Here's how you can identify and terminate such processes:
+If you wish to stop the application, you should stop the `systemd` service:
 
-### Identifying Running Scripts
+```bash
+sudo systemctl stop pocidfbi.service
+```
 
-1. **Check for the manager script** (`POCIDFBIManager.sh`):
+If you wish to disable it from starting on boot:
 
-   ```bash
-   pgrep -f POCIDFBIManager.sh
-   ```
-
-   This will display the process IDs of any instances of `POCIDFBIManager.sh` that are currently active.
-
-2. **Inspect for the CPU wastage script** (`WasteCPUWorker.sh`):
-
-   ```bash
-   pgrep -f WasteCPUWorker.sh
-   ```
-
-   If this script is active, you'll see its process IDs.
+```bash
+sudo systemctl disable pocidfbi.service
+```
 
 ### Terminating the Scripts
 
-1. **Terminate `POCIDFBIManager.sh` instances**:
+In rare cases where child worker scripts get stuck, you can terminate them directly:
 
-   ```bash
-   pkill -f POCIDFBIManager.sh
-   ```
-
-2. **Terminate `WasteCPUWorker.sh` instances**:
-
-   ```bash
-   pkill -f WasteCPUWorker.sh
-   ```
-
-### Verification
-
-After initiating the kill commands:
-
-1. **Recheck for `POCIDFBIManager.sh`**:
-
-   ```bash
-   pgrep -f POCIDFBIManager.sh
-   ```
-
-   Ensure no process IDs are listed. If there are, manually terminate them:
-
-   ```bash
-   kill -9 <PID>
-   ```
-
-   Replace `<PID>` with the lingering process ID.
-
-2. **Recheck for `WasteCPUWorker.sh`**:
-
-   ```bash
-   pgrep -f WasteCPUWorker.sh
-   ```
+```bash
+pkill -f WasteCPUWorker.sh
+pkill -f WasteMemoryWorker.sh
+pkill -f WasteNetworkWorker.sh
+```
 
 ### Monitoring
 
@@ -240,9 +209,7 @@ Once you've ensured that the unwanted processes are terminated:
 
 > **Caution**: Always exercise caution when using the `kill` command, especially with the `-9` option. It forcibly terminates processes and can inadvertently affect essential system processes if misused.
 
-## Platform Compatibility
-
-These scripts have been specifically designed and tested on Ubuntu 22.04 instances. Before using them, ensure you are running an instance with Ubuntu 22.04, as the commands, package references, and script behaviors might differ in other distributions or versions.
+These scripts have been specifically designed and tested on **Ubuntu 22.04** and **Ubuntu 24.04** instances. Before using them, ensure you are running a supported instance.
 
 If you are interested in adapting these scripts for other operating systems, distributions, or different Ubuntu versions, you might need to adjust command syntax, package management commands, and potentially other system-specific details.
 
@@ -260,6 +227,6 @@ If you are interested in adapting these scripts for other operating systems, dis
 
 ## Disclaimer
 
-The code and scripts provided in this repository are the independent work of Codycody31 and are not endorsed, certified, or otherwise affiliated with VMG Ware. While Codycody31 is a member of VMG Ware, it is important to note that no VMG Ware resources were used in the creation of this repository, and it does not represent the views or policies of VMG Ware.
+The code and scripts provided in this repository are the independent work of Arean82 (originally Codycody31).
 
 Users are responsible for understanding the implications and ensuring that their use of these scripts aligns with Oracle's terms of service, as well as other ethical and legal considerations. Always exercise caution and discretion when using third-party scripts, and seek appropriate legal counsel if unsure.

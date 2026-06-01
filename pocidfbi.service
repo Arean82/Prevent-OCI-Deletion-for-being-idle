@@ -1,0 +1,14 @@
+[Unit]
+Description=Prevent OCI Deletion For Being Idle Manager
+After=network.target
+
+[Service]
+Type=simple
+User=root
+# The path will be dynamically replaced by install.sh during setup
+ExecStart=/bin/bash /opt/Prevent-OCI-Deletion-for-being-idle/POCIDFBIManager.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

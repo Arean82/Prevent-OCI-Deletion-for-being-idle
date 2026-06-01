@@ -1,14 +1,7 @@
 #!/bin/bash
 
-# Define the lockfile path
-LOCKFILE="/tmp/POCIDFBIManager.lock"
-
 # Get the directory of the script itself
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-
-# Define the log file path
-LOG_DIR="$SCRIPT_DIR/log"
-LOG_FILE="$LOG_DIR/POCIDFBITrack.log"
 
 # Default values
 WORKER_COUNT=5
@@ -91,41 +84,17 @@ while getopts ":w:c:d:nh" opt; do
     esac
 done
 
-# Ensure that the log directory exists
-mkdir -p "$SCRIPT_DIR/log"
-
 # Function to calculate the current CPU load
 get_cpu_load() {
     echo $((100 - $(vmstat 1 2 | tail -1 | awk '{print $15}')))
 }
 
-# Function to log to the log file and to stdout
+# Function to log to stdout (systemd will capture this)
 log() {
     local message="$1"
     local timestamp="$(date +"%Y-%m-%d %H:%M:%S")"
-    local formatted_message="[$timestamp] $message"
     if [ "$LOGGING_ENABLED" = true ]; then
-        echo "$formatted_message" | tee -a "$LOG_FILE"
-    else
-        echo "$formatted_message"
-    fi
-}
-
-# Function to clean up the log file
-cleanup_log() {
-    # If log file is too big, truncate it
-    if [ "$(wc -c <"$LOG_FILE")" -gt 1000000 ]; then
-        # Make var that is the filename with the date appended
-        OLDLOGFILE="$LOG_DIR/POCIDFBITrack-$(date +"%Y-%m-%d-%H-%M-%S").log"
-
-        # Copy the file to a new file
-        cp "$LOG_FILE" "$OLDLOGFILE"
-
-        # Log the truncation
-        log "Log file is too big. Moving to $OLDLOGFILE and truncating."
-
-        # Truncate the log file
-        truncate -s 0 "$LOG_FILE"
+        echo "[$timestamp] $message"
     fi
 }
 
@@ -134,13 +103,9 @@ exit_handler() {
     printf "\n"
     # Kill all spawned waste workers
     log "Killing all spawned waste workers..."
-    # TODO: Might need to ensure the parent who spawned it is a POCIDFBIManager.sh instance
     pkill -f WasteCPUWorker.sh
     pkill -f WasteMemoryWorker.sh
-
-    # Remove lockfile
-    log "Removing lockfile..."
-    rm -f "$LOCKFILE"
+    pkill -f WasteNetworkWorker.sh
 
     # Log script exit
     log "Exiting POCIDFBIManager.sh at $(date)."
@@ -149,18 +114,6 @@ exit_handler() {
 
 # Trap specific signals and run the exit_handler
 trap exit_handler SIGINT SIGTERM
-
-# Check if lockfile exists
-if [ -e "$LOCKFILE" ]; then
-    log "Another instance of the POCIDFBIManager.sh script is already running. Exiting."
-    exit 0
-fi
-
-# Create lockfile
-touch "$LOCKFILE"
-
-# Ensure that lockfile is removed when script exits
-trap 'rm -f $LOCKFILE' EXIT
 
 # Change directory to the script's directory
 cd "$SCRIPT_DIR" || exit
@@ -185,17 +138,16 @@ while true; do
         for _ in $(seq 1 "$WORKER_COUNT"); do
             /bin/bash "$SCRIPT_DIR/workers/WasteCPUWorker.sh" &
         done
+        
+        # Spawn memory and network workers
+        /bin/bash "$SCRIPT_DIR/workers/WasteMemoryWorker.sh" &
+        /bin/bash "$SCRIPT_DIR/workers/WasteNetworkWorker.sh" &
 
         wait # Wait for all spawned scripts to complete
 
-        log "Completed running $WORKER_COUNT instances of waste workers at $(date)."
+        log "Completed running waste workers at $(date)."
     else
         log "CPU Load is within acceptable range at $(date). No action taken."
-    fi
-
-    # Random chance to run the cleanup_log function
-    if [ "$((RANDOM % 100))" -lt 5 ]; then
-        cleanup_log
     fi
 
     sleep "$DURATION_BETWEEN_CHECKS"

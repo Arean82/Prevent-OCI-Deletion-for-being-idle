@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Initialize flag for cron setup to true (meaning by default cron will be set up)
-SETUP_CRON=true
+# Initialize flag for systemd setup to true
+SETUP_SYSTEMD=true
 TARGET_DIR="$HOME/Prevent-OCI-Deletion-for-being-idle" # Default installation directory
 
 # Function to display help message
 display_help() {
     echo "Usage: $0 [options]"
-    echo "  -n  Disable cron setup."
+    echo "  -n  Disable systemd setup."
     echo "  -h  Display this help message."
 }
 
@@ -46,7 +46,7 @@ fi
 while getopts ":nd:h" opt; do
     case ${opt} in
     n) # process option n
-        SETUP_CRON=false
+        SETUP_SYSTEMD=false
         ;;
     d)
         TARGET_DIR=$OPTARG
@@ -56,7 +56,7 @@ while getopts ":nd:h" opt; do
         exit 0
         ;;
     \?)
-        echo "Usage: $0 [-n (no cron setup)]"
+        echo "Usage: $0 [-n (no systemd setup)]"
         exit 1
         ;;
     esac
@@ -96,7 +96,7 @@ fi
 echo "This script will install the repo into $TARGET_DIR..."
 
 # Define the URL for the GitHub zip file
-REPO_ZIP_URL="https://github.com/Codycody31/Prevent-OCI-Deletion-for-being-idle/archive/refs/heads/master.zip"
+REPO_ZIP_URL="https://github.com/Arean82/Prevent-OCI-Deletion-for-being-idle/archive/refs/heads/master.zip"
 
 # Fetch and unzip the repo
 echo "Fetching and unzipping the repo..."
@@ -108,7 +108,7 @@ echo "Moving the repo to $TARGET_DIR..."
 # Check if target dir is not empty
 if [ "$(ls -A "$TARGET_DIR")" ]; then
     echo "Target directory is not empty. Cleaning up..."
-    rm -f -r "${TARGET_DIR/*/}"
+    rm -rf "$TARGET_DIR"/*
 fi
 
 # Move content to location
@@ -125,26 +125,26 @@ if ! [ -x "$(command -v POCIDFBI)" ]; then
 fi
 echo "POCIDFBI.sh is now executable and can be run from anywhere using the command POCIDFBI."
 
-# Set up cron only if SETUP_CRON is true
-if $SETUP_CRON; then
-    # Backup the crontab first
-    crontab -l >"$HOME/cron_backup.txt"
+# Set up systemd only if SETUP_SYSTEMD is true
+if $SETUP_SYSTEMD; then
+    echo "Setting up systemd service..."
+    
+    # Update the path in the service file to point to the actual target directory
+    sed -i "s|ExecStart=.*|ExecStart=/bin/bash $TARGET_DIR/POCIDFBIManager.sh|g" "$TARGET_DIR/pocidfbi.service"
+    sed -i "s|User=root|User=$(whoami)|g" "$TARGET_DIR/pocidfbi.service"
 
-    # Check if the cron task already exists
-    if grep -q "POCIDFBIManager.sh" "$HOME/cron_backup.txt"; then
-        echo "Cron task already exists. Skipping..."
-    else
-        echo "Cron task does not exist. Adding..."
-        # Add the cron task without overwriting
-        (
-            crontab -l
-            echo "* * * * * /bin/bash $TARGET_DIR/POCIDFBIManager.sh"
-        ) | crontab -
-    fi
+    # Copy the service file to the systemd directory
+    sudo cp "$TARGET_DIR/pocidfbi.service" /etc/systemd/system/
+
+    # Reload systemd, enable and start the service
+    sudo systemctl daemon-reload
+    sudo systemctl enable pocidfbi.service
+    sudo systemctl restart pocidfbi.service
+    
+    echo "Service installed and started! You can check logs with: journalctl -u pocidfbi.service"
 else
-    echo "Skipping cron setup as per user request."
-    echo "If you'd like to add the cron task manually later, here's the line you would add to your crontab:"
-    echo "* * * * * /bin/bash $TARGET_DIR/POCIDFBIManager.sh"
+    echo "Skipping systemd setup as per user request."
+    echo "If you'd like to install the service manually later, copy pocidfbi.service to /etc/systemd/system/ and enable it."
 fi
 
 echo "Setup complete!"
