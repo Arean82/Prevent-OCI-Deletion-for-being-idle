@@ -142,11 +142,11 @@ sudo systemctl status pocidfbi.service
 
 **1. Why Use the Worker Scripts?**
 
-The `WasteCPUWorker.sh` script generates computational work by calculating a SHA256 hash stream for 5 seconds. `WasteMemoryWorker.sh` allocates a 50MB string in memory. `WasteNetworkWorker.sh` downloads dummy data to `/dev/null`. This combined activity satisfies Oracle's metrics without having any lasting effect on storage.
+The `WasteCPUWorker.sh` script generates computational work by calculating a SHA256 hash stream for 5 seconds. This process is launched with `nice -n 19`, ensuring it runs at the lowest possible priority. This means it only uses CPU cycles when your server is idle, and instantly yields power back to your real applications if they need it. `WasteMemoryWorker.sh` allocates a 50MB string in memory. `WasteNetworkWorker.sh` downloads dummy data to `/dev/null`. This combined activity satisfies Oracle's metrics without having any lasting effect on storage.
 
 **2. Why Monitor with `POCIDFBIManager.sh`?**
 
-Instead of blindly running the waster scripts continuously, the `POCIDFBIManager.sh` script runs as a lightweight `systemd` background service, checking the current CPU workload and deciding whether to activate the waste worker scripts only when the server is idle.
+Instead of blindly running the waster scripts continuously, the `POCIDFBIManager.sh` script runs as a lightweight `systemd` background service, checking the current workload. It evaluates CPU, Memory, and Network independently, and will only spawn the specific workers needed for whichever metric has fallen below acceptable levels.
 
 ## Modifying the Manager Script
 
@@ -161,8 +161,8 @@ To control the CPU usage, you might want to adjust the manager script. Here's a 
 
   determines when to activate the CPU waster script. Here, it activates if CPU load is less than or equal to 20% (the default value). You can change this value to suit your needs. Via the CLI, you can use the `-c` option to set this value. If you are using the configuration file, you can set the `CPU_THRESHOLD` variable to your desired value.
 
-* **Measuring CPU Load**:
-  The line
+* **Independent Triggers**:
+  You can modify the `get_mem_load` or `get_network_load` thresholds inside `POCIDFBIManager.sh` if you find that the default memory (20%) or network (10KB/s) checks are not fitting your needs.
 
   ```bash
   currentCpuLoad=$[100-$(vmstat 1 2|tail -1|awk '{print $15}')]
@@ -193,7 +193,7 @@ sudo systemctl disable pocidfbi.service
 
 ### Terminating the Scripts
 
-In rare cases where child worker scripts get stuck, you can terminate them directly:
+In rare cases where child worker scripts get stuck, you can terminate them directly (though the manager natively tracks its child PIDs and shuts them down cleanly):
 
 ```bash
 pkill -f WasteCPUWorker.sh
@@ -221,7 +221,6 @@ If you are interested in adapting these scripts for other operating systems, dis
 
 ## Notes
 
-* Adjust the frequency in the crontab entry as per your requirements.
 * Monitor your instance's resource usage regularly to ensure it remains within desired parameters.
 * Understand that this approach, while effective, can be resource-intensive. Ensure you are within the ethical bounds of Oracle's policy and terms of service.
 

@@ -89,6 +89,33 @@ get_cpu_load() {
     echo $((100 - $(vmstat 1 2 | tail -1 | awk '{print $15}')))
 }
 
+# Function to calculate memory load
+get_mem_load() {
+    free | awk '/Mem:/ {if ($2 > 0) print int($3/$2 * 100.0); else print 0}'
+}
+
+# Function to check if network is idle
+get_network_load() {
+    local iface=$(ip route 2>/dev/null | awk '/^default/ {print $5}' | head -n1)
+    if [ -z "$iface" ] || [ ! -e "/sys/class/net/$iface/statistics/rx_bytes" ]; then
+        echo 0 # Default to 0 (idle) if we can't determine it
+        return
+    fi
+    local rx1=$(cat /sys/class/net/$iface/statistics/rx_bytes)
+    local tx1=$(cat /sys/class/net/$iface/statistics/tx_bytes)
+    sleep 1
+    local rx2=$(cat /sys/class/net/$iface/statistics/rx_bytes)
+    local tx2=$(cat /sys/class/net/$iface/statistics/tx_bytes)
+    
+    local total_bps=$(( (rx2 - rx1) + (tx2 - tx1) ))
+    # If bandwidth is less than ~10KB/s, consider it idle
+    if [ "$total_bps" -lt 10240 ]; then
+        echo 0
+    else
+        echo 100
+    fi
+}
+
 # Function to log to stdout (systemd will capture this)
 log() {
     local message="$1"
@@ -98,14 +125,16 @@ log() {
     fi
 }
 
+# Global array to track PIDs
+WORKER_PIDS=()
+
 # Function to cleanup when the script exits
 exit_handler() {
     printf "\n"
-    # Kill all spawned waste workers
-    log "Killing all spawned waste workers..."
-    pkill -f WasteCPUWorker.sh
-    pkill -f WasteMemoryWorker.sh
-    pkill -f WasteNetworkWorker.sh
+    log "Killing tracked waste workers gracefully..."
+    for pid in "${WORKER_PIDS[@]}"; do
+        kill -9 "$pid" 2>/dev/null || true
+    done
 
     # Log script exit
     log "Exiting POCIDFBIManager.sh at $(date)."
@@ -126,28 +155,42 @@ log "Script will trigger when CPU load is below $CPU_THRESHOLD% and will spawn $
 
 # Main loop
 while true; do
-    # Get current CPU load
+    WORKER_PIDS=()
+    
+    # Get current metrics
     currentCpuLoad=$(get_cpu_load)
-    log "Current CPU Load at $(date): $currentCpuLoad%"
+    currentMemLoad=$(get_mem_load)
+    currentNetLoad=$(get_network_load)
+
+    log "Load metrics - CPU: $currentCpuLoad%, Mem: $currentMemLoad%, NetIdle: $([ "$currentNetLoad" -eq 0 ] && echo 'Yes' || echo 'No')"
 
     # if CPU load is below X%, spawn Y instances of WasteCPUWorker.sh
-    if [ "$currentCpuLoad" -le "$CPU_THRESHOLD" ]; then # Adjusted the threshold to 20% for some buffer
-        log "CPU Load below threshold at $(date). Spawning $WORKER_COUNT instances of waste workers..."
-
-        # Spawn instances of the specified worker(s) concurrently
+    if [ "$currentCpuLoad" -le "$CPU_THRESHOLD" ]; then 
+        log "CPU Load below threshold. Spawning $WORKER_COUNT CPU workers..."
         for _ in $(seq 1 "$WORKER_COUNT"); do
             /bin/bash "$SCRIPT_DIR/workers/WasteCPUWorker.sh" &
+            WORKER_PIDS+=($!)
         done
-        
-        # Spawn memory and network workers
+    fi
+
+    # Trigger Memory worker if memory load is <= 20%
+    if [ "$currentMemLoad" -le 20 ]; then
+        log "Memory Load below threshold. Spawning Memory worker..."
         /bin/bash "$SCRIPT_DIR/workers/WasteMemoryWorker.sh" &
+        WORKER_PIDS+=($!)
+    fi
+
+    # Trigger Network worker if network is idle
+    if [ "$currentNetLoad" -eq 0 ]; then
+        log "Network is idle. Spawning Network worker..."
         /bin/bash "$SCRIPT_DIR/workers/WasteNetworkWorker.sh" &
+        WORKER_PIDS+=($!)
+    fi
 
-        wait # Wait for all spawned scripts to complete
-
-        log "Completed running waste workers at $(date)."
-    else
-        log "CPU Load is within acceptable range at $(date). No action taken."
+    # Wait for tracked workers
+    if [ ${#WORKER_PIDS[@]} -gt 0 ]; then
+        wait "${WORKER_PIDS[@]}" 2>/dev/null
+        log "Completed running waste workers."
     fi
 
     sleep "$DURATION_BETWEEN_CHECKS"
